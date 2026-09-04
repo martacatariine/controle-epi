@@ -479,13 +479,128 @@
       new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('timeout')); }, ms); })
     ]);
   }
+
+  /* ================= Firestore via REST (bypasses the SDK's streaming channel,
+     which gets blocked on some networks/browsers even though plain HTTPS works fine) ================= */
+  function makeRestDb(){
+    var BASE = 'https://firestore.googleapis.com/v1/projects/'+firebaseConfig.projectId+'/databases/(default)/documents';
+
+    function jsToValue(v){
+      if(v===null || v===undefined) return {nullValue:null};
+      if(typeof v==='boolean') return {booleanValue:v};
+      if(typeof v==='number') return Number.isInteger(v) ? {integerValue:String(v)} : {doubleValue:v};
+      if(Array.isArray(v)) return {arrayValue:{values:v.map(jsToValue)}};
+      if(typeof v==='object') return {mapValue:{fields:jsToFields(v)}};
+      return {stringValue:String(v)};
+    }
+    function valueToJs(val){
+      if(!val) return null;
+      if('nullValue' in val) return null;
+      if('booleanValue' in val) return val.booleanValue;
+      if('integerValue' in val) return parseInt(val.integerValue,10);
+      if('doubleValue' in val) return val.doubleValue;
+      if('stringValue' in val) return val.stringValue;
+      if('timestampValue' in val) return val.timestampValue;
+      if('arrayValue' in val) return (val.arrayValue.values||[]).map(valueToJs);
+      if('mapValue' in val) return fieldsToJs(val.mapValue.fields||{});
+      return null;
+    }
+    function jsToFields(obj){
+      var out = {};
+      for(var k in obj){ if(Object.prototype.hasOwnProperty.call(obj,k) && obj[k]!==undefined) out[k]=jsToValue(obj[k]); }
+      return out;
+    }
+    function fieldsToJs(fields){
+      var out = {};
+      for(var k in fields){ if(Object.prototype.hasOwnProperty.call(fields,k)) out[k]=valueToJs(fields[k]); }
+      return out;
+    }
+    async function authHeaders(){
+      var h = {'Content-Type':'application/json'};
+      if(auth && auth.currentUser){
+        try{ var t = await auth.currentUser.getIdToken(); h['Authorization'] = 'Bearer '+t; }catch(e){}
+      }
+      return h;
+    }
+    async function req(method, url, body){
+      var headers = await authHeaders();
+      var resp = await fetch(url, {method:method, headers:headers, body: body!==undefined ? JSON.stringify(body) : undefined});
+      if(!resp.ok){
+        var txt=''; try{ txt = await resp.text(); }catch(e){}
+        var err = new Error('Firestore REST '+resp.status+': '+txt);
+        err.status = resp.status;
+        throw err;
+      }
+      var txt2 = await resp.text();
+      return txt2 ? JSON.parse(txt2) : null;
+    }
+    function docRef(path){
+      var id = path.split('/').pop();
+      return {
+        id: id,
+        get: async function(){
+          try{
+            var json = await req('GET', BASE+'/'+path);
+            var f = json && json.fields ? fieldsToJs(json.fields) : {};
+            return { exists:true, id:id, data:function(){ return f; } };
+          }catch(e){
+            if(e.status===404) return { exists:false, id:id, data:function(){ return undefined; } };
+            throw e;
+          }
+        },
+        set: async function(data){ await req('PATCH', BASE+'/'+path, {fields: jsToFields(data)}); },
+        update: async function(data){
+          var qs = Object.keys(data).map(function(k){ return 'updateMask.fieldPaths='+encodeURIComponent(k); }).join('&');
+          await req('PATCH', BASE+'/'+path+(qs?('?'+qs):''), {fields: jsToFields(data)});
+        }
+      };
+    }
+    function collRef(collPath){
+      var limitN = null;
+      var self = {
+        add: async function(data){
+          var json = await req('POST', BASE+'/'+collPath, {fields: jsToFields(data)});
+          return { id: json.name.split('/').pop() };
+        },
+        limit: function(n){ limitN = n; return self; },
+        get: async function(){
+          var docs = [];
+          var pageToken = '';
+          do{
+            var url = BASE+'/'+collPath+'?pageSize='+(limitN||300)+(pageToken?('&pageToken='+encodeURIComponent(pageToken)):'');
+            var json = await req('GET', url);
+            (json && json.documents || []).forEach(function(d){
+              var did = d.name.split('/').pop();
+              docs.push({ id: did, data:function(){ return fieldsToJs(d.fields||{}); } });
+            });
+            pageToken = json && json.nextPageToken;
+            if(limitN) break;
+          }while(pageToken && docs.length < 5000);
+          return { docs: docs, empty: docs.length===0 };
+        },
+        onSnapshot: function(cb, errCb){
+          var stopped = false;
+          async function poll(){
+            if(stopped) return;
+            try{ var snap = await self.get(); if(!stopped) cb(snap); }
+            catch(e){ if(errCb) errCb(e); }
+            if(!stopped) setTimeout(poll, 12000);
+          }
+          poll();
+          return function(){ stopped = true; };
+        }
+      };
+      return self;
+    }
+    return { doc: docRef, collection: collRef };
+  }
+
   async function initFirebase(){
     firebase.initializeApp(firebaseConfig);
     var secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary');
     auth = firebase.auth();
     secondaryAuth = secondaryApp.auth();
-    db = firebase.firestore();
-    try{ db.settings({ experimentalForceLongPolling: true, useFetchStreams: false }); console.log('[diag] db.settings() applied ok'); }catch(e){ console.error('[diag] db.settings() THREW:', e); }
+    db = makeRestDb();
     updateSyncPill();
     subscribeAll();
     seedCatalogIfEmpty();
