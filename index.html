@@ -668,15 +668,42 @@
     state.authView = 'loading'; render();
     suppressAuthListener = true;
     try{
-      var cred = await auth.createUserWithEmailAndPassword(email, senha);
-      await db.doc('usuarios/'+cred.user.uid).set({nome:nome, email:email, papel:'admin', ativo:true, criadoEm:todayISO()});
-      await db.doc('meta/config').set({hasUsers:true});
+      var cred;
+      try{
+        cred = await auth.createUserWithEmailAndPassword(email, senha);
+      }catch(authErr){
+        // If a previous attempt already created the Auth account but failed before
+        // saving the Firestore profile, "already in use" would otherwise be a dead end.
+        // Try signing in with the same credentials so we can retry the Firestore writes.
+        if(authErr && authErr.code==='auth/email-already-in-use'){
+          cred = await auth.signInWithEmailAndPassword(email, senha);
+        }else{
+          throw authErr;
+        }
+      }
+      try{
+        await db.doc('usuarios/'+cred.user.uid).set({nome:nome, email:email, papel:'admin', ativo:true, criadoEm:todayISO()});
+        await db.doc('meta/config').set({hasUsers:true});
+      }catch(writeErr){
+        console.error('attemptSetup: falha ao salvar no banco', writeErr);
+        var wdetail = (writeErr && writeErr.message) ? writeErr.message : 'erro desconhecido';
+        state.authError = 'A conta foi criada, mas não foi possível salvar os dados. Detalhe: '+wdetail+'. Toque em "Criar conta e entrar" novamente para tentar de novo.';
+        state.authView = 'setup';
+        render();
+        return;
+      }
       state.currentUser = {uid:cred.user.uid, email:email, nome:nome, papel:'admin'};
       state.authError = '';
       state.authView = null;
       render();
     }catch(e){
-      state.authError = (e && e.code==='auth/email-already-in-use') ? 'Já existe uma conta com esse e-mail.' : 'Não foi possível criar a conta. Verifique os dados e tente novamente.';
+      console.error('attemptSetup falhou', e);
+      var msg = 'Não foi possível criar a conta. Verifique os dados e tente novamente.';
+      if(e && e.code==='auth/email-already-in-use') msg = 'Já existe uma conta com esse e-mail, mas a senha informada não confere.';
+      else if(e && e.code==='auth/weak-password') msg = 'A senha é muito fraca. Use uma senha mais forte.';
+      else if(e && e.code==='auth/invalid-email') msg = 'O e-mail informado é inválido.';
+      else if(e && e.message) msg = 'Não foi possível criar a conta. Detalhe: '+e.message;
+      state.authError = msg;
       state.authView = 'setup';
       render();
     }finally{
