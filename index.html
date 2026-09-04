@@ -495,10 +495,11 @@
         if(suppressAuthListener) return;
         if(!user){
           state.currentUser = null;
+          state.authError = '';
           try{
             var metaDoc = await withTimeout(db.doc('meta/config').get(), 15000);
             state.authView = (metaDoc.exists && metaDoc.data().hasUsers) ? 'login' : 'setup';
-          }catch(e){ console.error('meta/config read failed:', e); state.authView = 'login'; }
+          }catch(e){ console.error('meta/config read failed:', e); state.authView = 'network-error'; }
           render();
           return;
         }
@@ -864,6 +865,7 @@
     renderChrome();
     var app = document.getElementById('app');
     if(state.authView==='loading'){ app.innerHTML = renderAuthLoading(); return; }
+    if(state.authView==='network-error'){ app.innerHTML = renderAuthNetworkError(); return; }
     if(state.authView==='setup'){ app.innerHTML = renderAuthSetup(); return; }
     if(state.authView==='login'){ app.innerHTML = renderAuthLogin(); return; }
     if(state.fichaId){ app.innerHTML = renderFicha(state.fichaId); return; }
@@ -878,6 +880,13 @@
   /* ================= Autenticação (telas) ================= */
   function renderAuthLoading(){
     return '<div class="auth-wrap"><div class="auth-card"><h2>Carregando…</h2></div></div>';
+  }
+  function renderAuthNetworkError(){
+    return '<div class="auth-wrap"><div class="auth-card">'+
+        '<h2>Não foi possível conectar</h2>'+
+        '<div class="sub">A conexão com o banco de dados está lenta ou bloqueada nesta rede. Verifique sua internet (ou tente outra rede/Wi-Fi) e tente novamente.</div>'+
+        '<button type="button" class="btn btn-primary" style="justify-content:center;margin-top:14px;" data-action="retry-connection">Tentar novamente</button>'+
+      '</div></div>';
   }
   function renderAuthSetup(){
     var err = state.authError ? '<div class="auth-error">'+esc(state.authError)+'</div>' : '';
@@ -1319,6 +1328,7 @@
       else if(action==='toggle-confirmado'){ toggleConfirmado(id); }
       else if(action==='registrar-devolucao'){ registrarDevolucao(id); }
       else if(action==='logout'){ logout(); }
+      else if(action==='retry-connection'){ location.reload(); }
       else if(action==='open-usuario-new'){ openUsuarioNew(); }
       else if(action==='reset-senha'){ resetSenhaUsuario(t.dataset.email); }
       else if(action==='toggle-usuario-ativo'){ toggleUsuarioAtivo(id); }
