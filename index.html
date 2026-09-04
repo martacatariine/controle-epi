@@ -471,34 +471,39 @@
   var suppressAuthListener = false;
 
   /* ================= Firebase init ================= */
+  function withTimeout(promise, ms){
+    return Promise.race([
+      promise,
+      new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('timeout')); }, ms); })
+    ]);
+  }
   async function initFirebase(){
     firebase.initializeApp(firebaseConfig);
     var secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary');
     auth = firebase.auth();
     secondaryAuth = secondaryApp.auth();
     db = firebase.firestore();
+    try{ db.settings({ experimentalAutoDetectLongPolling: true, useFetchStreams: false }); }catch(e){}
     updateSyncPill();
     subscribeAll();
     seedCatalogIfEmpty();
-    var authResolved = false;
     setTimeout(function(){
-      if(!authResolved && state.authView==='loading'){ state.authView = 'login'; render(); }
+      if(state.authView==='loading'){ state.authView = 'login'; render(); }
     }, 8000);
     auth.onAuthStateChanged(async function(user){
       try{
-        authResolved = true;
         if(suppressAuthListener) return;
         if(!user){
           state.currentUser = null;
           try{
-            var metaDoc = await db.doc('meta/config').get();
+            var metaDoc = await withTimeout(db.doc('meta/config').get(), 7000);
             state.authView = (metaDoc.exists && metaDoc.data().hasUsers) ? 'login' : 'setup';
-          }catch(e){ state.authView = 'login'; }
+          }catch(e){ console.error('meta/config read failed:', e); state.authView = 'login'; }
           render();
           return;
         }
         try{
-          var doc = await db.doc('usuarios/'+user.uid).get();
+          var doc = await withTimeout(db.doc('usuarios/'+user.uid).get(), 7000);
           if(!doc.exists || doc.data().ativo===false){
             await auth.signOut();
             state.authError = 'Este usuário está desativado. Fale com um administrador.';
@@ -512,11 +517,14 @@
           state.authView = null;
           render();
         }catch(e){
+          console.error('usuarios/{uid} read failed:', e);
+          try{ await auth.signOut(); }catch(e2){}
           state.authError = 'Não foi possível confirmar seu acesso. Tente novamente.';
           state.authView = 'login';
           render();
         }
       }catch(outerErr){
+        console.error('onAuthStateChanged outer error:', outerErr);
         state.authView = 'login';
         render();
       }
