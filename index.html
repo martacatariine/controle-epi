@@ -489,21 +489,21 @@
     seedCatalogIfEmpty();
     setTimeout(function(){
       if(state.authView==='loading'){ state.authView = 'login'; render(); }
-    }, 8000);
+    }, 18000);
     auth.onAuthStateChanged(async function(user){
       try{
         if(suppressAuthListener) return;
         if(!user){
           state.currentUser = null;
           try{
-            var metaDoc = await withTimeout(db.doc('meta/config').get(), 7000);
+            var metaDoc = await withTimeout(db.doc('meta/config').get(), 15000);
             state.authView = (metaDoc.exists && metaDoc.data().hasUsers) ? 'login' : 'setup';
           }catch(e){ console.error('meta/config read failed:', e); state.authView = 'login'; }
           render();
           return;
         }
         try{
-          var doc = await withTimeout(db.doc('usuarios/'+user.uid).get(), 7000);
+          var doc = await withTimeout(db.doc('usuarios/'+user.uid).get(), 15000);
           if(!doc.exists || doc.data().ativo===false){
             await auth.signOut();
             state.authError = 'Este usuário está desativado. Fale com um administrador.';
