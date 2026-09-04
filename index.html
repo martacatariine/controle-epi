@@ -471,7 +471,9 @@
   var suppressAuthListener = false;
 
   /* ================= Firebase init ================= */
-  function withTimeout(promise, ms){
+  function withTimeout(promise, ms, label){
+    promise.then(function(v){ console.log('[diag] '+label+' eventually SUCCEEDED (after our timeout may have already fired):', v); },
+                 function(e){ console.error('[diag] '+label+' eventually FAILED (after our timeout may have already fired):', e && e.code, e && e.message, e); });
     return Promise.race([
       promise,
       new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('timeout')); }, ms); })
@@ -483,7 +485,7 @@
     auth = firebase.auth();
     secondaryAuth = secondaryApp.auth();
     db = firebase.firestore();
-    try{ db.settings({ experimentalForceLongPolling: true, useFetchStreams: false }); }catch(e){}
+    try{ db.settings({ experimentalForceLongPolling: true, useFetchStreams: false }); console.log('[diag] db.settings() applied ok'); }catch(e){ console.error('[diag] db.settings() THREW:', e); }
     updateSyncPill();
     subscribeAll();
     seedCatalogIfEmpty();
@@ -497,14 +499,14 @@
           state.currentUser = null;
           state.authError = '';
           try{
-            var metaDoc = await withTimeout(db.doc('meta/config').get(), 15000);
+            var metaDoc = await withTimeout(db.doc('meta/config').get(), 15000, 'meta/config');
             state.authView = (metaDoc.exists && metaDoc.data().hasUsers) ? 'login' : 'setup';
           }catch(e){ console.error('meta/config read failed:', e); state.authView = 'network-error'; }
           render();
           return;
         }
         try{
-          var doc = await withTimeout(db.doc('usuarios/'+user.uid).get(), 15000);
+          var doc = await withTimeout(db.doc('usuarios/'+user.uid).get(), 15000, 'usuarios/{uid}');
           if(!doc.exists || doc.data().ativo===false){
             await auth.signOut();
             state.authError = 'Este usuário está desativado. Fale com um administrador.';
