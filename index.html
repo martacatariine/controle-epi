@@ -480,33 +480,43 @@
     updateSyncPill();
     subscribeAll();
     seedCatalogIfEmpty();
+    var authResolved = false;
+    setTimeout(function(){
+      if(!authResolved && state.authView==='loading'){ state.authView = 'login'; render(); }
+    }, 8000);
     auth.onAuthStateChanged(async function(user){
-      if(suppressAuthListener) return;
-      if(!user){
-        state.currentUser = null;
-        try{
-          var snap = await db.collection('usuarios').limit(1).get();
-          state.authView = snap.empty ? 'setup' : 'login';
-        }catch(e){ state.authView = 'login'; }
-        render();
-        return;
-      }
       try{
-        var doc = await db.doc('usuarios/'+user.uid).get();
-        if(!doc.exists || doc.data().ativo===false){
-          await auth.signOut();
-          state.authError = 'Este usuário está desativado. Fale com um administrador.';
-          state.authView = 'login';
+        authResolved = true;
+        if(suppressAuthListener) return;
+        if(!user){
+          state.currentUser = null;
+          try{
+            var metaDoc = await db.doc('meta/config').get();
+            state.authView = (metaDoc.exists && metaDoc.data().hasUsers) ? 'login' : 'setup';
+          }catch(e){ state.authView = 'login'; }
           render();
           return;
         }
-        var d = doc.data();
-        state.currentUser = {uid:user.uid, email:user.email, nome:d.nome, papel:d.papel};
-        state.authError = '';
-        state.authView = null;
-        render();
-      }catch(e){
-        state.authError = 'Não foi possível confirmar seu acesso. Tente novamente.';
+        try{
+          var doc = await db.doc('usuarios/'+user.uid).get();
+          if(!doc.exists || doc.data().ativo===false){
+            await auth.signOut();
+            state.authError = 'Este usuário está desativado. Fale com um administrador.';
+            state.authView = 'login';
+            render();
+            return;
+          }
+          var d = doc.data();
+          state.currentUser = {uid:user.uid, email:user.email, nome:d.nome, papel:d.papel};
+          state.authError = '';
+          state.authView = null;
+          render();
+        }catch(e){
+          state.authError = 'Não foi possível confirmar seu acesso. Tente novamente.';
+          state.authView = 'login';
+          render();
+        }
+      }catch(outerErr){
         state.authView = 'login';
         render();
       }
@@ -534,6 +544,7 @@
     try{
       var cred = await auth.createUserWithEmailAndPassword(email, senha);
       await db.doc('usuarios/'+cred.user.uid).set({nome:nome, email:email, papel:'admin', ativo:true, criadoEm:todayISO()});
+      await db.doc('meta/config').set({hasUsers:true});
       state.currentUser = {uid:cred.user.uid, email:email, nome:nome, papel:'admin'};
       state.authError = '';
       state.authView = null;
