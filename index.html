@@ -483,7 +483,7 @@
     auth = firebase.auth();
     secondaryAuth = secondaryApp.auth();
     db = firebase.firestore();
-    try{ db.settings({ experimentalAutoDetectLongPolling: true, useFetchStreams: false }); }catch(e){}
+    try{ db.settings({ experimentalForceLongPolling: true, useFetchStreams: false }); }catch(e){}
     updateSyncPill();
     subscribeAll();
     seedCatalogIfEmpty();
